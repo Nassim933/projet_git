@@ -9,6 +9,10 @@ on:
         description: "Envoyer un message de test sur Telegram"
         type: boolean
         default: false
+      artistes:
+        description: "Artistes à surveiller pour cette exécution (vide = réglage habituel)"
+        type: string
+        default: ""
 
 concurrency:
   group: nrj-alert
@@ -32,7 +36,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          ARTISTS: ${{ vars.ARTISTS }}
+          ARTISTS: ${{ inputs.artistes || vars.ARTISTS }}
           LOOP_MINUTES: "20"
           POLL_SECONDS: "60"
         run: python bot.py ${{ inputs.test && '--test' || '' }}
