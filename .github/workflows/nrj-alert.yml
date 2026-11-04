@@ -2,7 +2,7 @@ name: Alerte NRJ
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # relance toutes les 5 min ; chaque exécution vérifie NRJ chaque minute
+    - cron: "*/5 * * * *"   # filet de sécurité : une exécution vérifie NRJ chaque minute pendant 20 min, la suivante attend dans la file
   workflow_dispatch:
     inputs:
       test:
@@ -17,7 +17,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -33,7 +33,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ARTISTS: ${{ vars.ARTISTS }}
-          LOOP_MINUTES: "4"
+          LOOP_MINUTES: "20"
           POLL_SECONDS: "60"
         run: python bot.py ${{ inputs.test && '--test' || '' }}
 
