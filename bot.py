@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """
-Bot d'alerte Telegram : prévient quand Adele ou Karol G passe sur Énergie.
+Bot d'alerte Telegram : prévient quand Karol G ou Adele/Adéla passe en direct sur NRJ.
 
 Sources (dans l'ordre) :
-  1. API publique "now playing" de Triton Digital (StreamTheWorld), qui diffuse
-     les radios Énergie de Bell Media. Elle renvoie les ~10 derniers titres,
-     donc aucun passage n'est manqué entre deux exécutions.
-  2. Secours : métadonnées ICY (StreamTitle) lues dans le flux audio.
+  1. API du lecteur web NRJ (players.nrjaudio.fm) : titre en cours.
+  2. Secours : métadonnées ICY (StreamTitle) lues dans le flux audio NRJ.
 
 Uniquement la bibliothèque standard Python, aucune dépendance.
 
 Variables d'environnement :
   TELEGRAM_BOT_TOKEN  (obligatoire)  token donné par @BotFather
   TELEGRAM_CHAT_ID    (obligatoire)  ton chat id
-  ARTISTS             (optionnel)    ex. "Adele,Karol G"
-  MOUNTS              (optionnel)    points de montage Triton, ex. "CKMFFM"
+  ARTISTS             (optionnel)    ex. "Adele,Adela,Karol G"
+  NRJ_ID              (optionnel)    id de la webradio NRJ (158 = NRJ France, le direct)
+  STREAM_URL          (optionnel)    flux audio utilisé en secours
   STATE_FILE          (optionnel)    fichier mémorisant les titres déjà signalés
   LOOP_MINUTES        (optionnel)    si > 0, le script boucle pendant N minutes
   POLL_SECONDS        (optionnel)    intervalle entre deux vérifications (boucle)
@@ -27,14 +26,13 @@ import time
 import unicodedata
 import urllib.parse
 import urllib.request
-import xml.etree.ElementTree as ET
 
-DEFAULT_ARTISTS = "Adele,Karol G"
-# CKMF-FM = Énergie 94.3 Montréal. Ajoute d'autres stations séparées par des virgules.
-DEFAULT_MOUNTS = "CKMFFM"
-DEFAULT_STREAM = "https://playerservices.streamtheworld.com/api/livestream-redirect/{mount}.mp3"
-TRITON_URL = "https://np.tritondigital.com/public/nowplaying"
-UA = "energie-telegram-alert/1.0"
+DEFAULT_ARTISTS = "Adele,Adela,Karol G"
+DEFAULT_NRJ_ID = "158"  # NRJ (le direct national)
+NRJ_API = "https://players.nrjaudio.fm/wr_api/live/fr?act={act}&id_wr={id}&cp=utf8&fmt=json"
+DEFAULT_STREAM = "https://streaming.nrjaudio.fm/oumvmk8fnozc"
+REALERT_MINUTES = 20  # un même titre n'est re-signalé qu'après ce délai
+UA = "Mozilla/5.0 (nrj-telegram-alert)"
 
 
 def log(*a):
@@ -42,7 +40,7 @@ def log(*a):
 
 
 def norm(s):
-    """minuscules, sans accents, sans ponctuation : 'Adèle' -> 'adele', 'KAROL-G' -> 'karol g'."""
+    """minuscules, sans accents, sans ponctuation : 'Adéla' -> 'adela', 'KAROL-G' -> 'karol g'."""
     s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode()
     return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
@@ -58,25 +56,27 @@ def http_get(url, timeout=20, headers=None):
     return urllib.request.urlopen(req, timeout=timeout)
 
 
-# ---------- Source 1 : Triton now playing ----------
-def fetch_triton(mount, n=10):
-    q = urllib.parse.urlencode({"mountName": mount, "numberToFetch": n, "eventType": "track"})
-    with http_get(f"{TRITON_URL}?{q}") as r:
-        root = ET.fromstring(r.read())
+# ---------- Source 1 : API NRJ ----------
+def fetch_nrj(station_id):
     tracks = []
-    for item in root.iter("nowplaying-info"):
-        props = {p.get("name"): (p.text or "").strip() for p in item.iter("property")}
-        artist = props.get("track_artist_name", "")
-        title = props.get("cue_title", "")
-        start = props.get("cue_time_start") or item.get("timestamp") or ""
-        if artist or title:
-            tracks.append({"artist": artist, "title": title, "start": start})
-    return tracks
+    for act in ("get_cur", "get_plist"):
+        with http_get(NRJ_API.format(act=act, id=station_id)) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+        items = data.get("itms") or []
+        if isinstance(items, dict):
+            items = list(items.values())
+        for it in items:
+            artist, title = (it.get("art") or "").strip(), (it.get("tit") or "").strip()
+            if artist or title:
+                tracks.append({"artist": artist, "title": title})
+        if tracks:
+            break
+    return tracks  # le plus récent en premier
 
 
 # ---------- Source 2 : métadonnées ICY du flux ----------
-def fetch_icy(mount):
-    url = os.environ.get("STREAM_URL") or DEFAULT_STREAM.format(mount=mount)
+def fetch_icy():
+    url = os.environ.get("STREAM_URL") or DEFAULT_STREAM
     with http_get(url, timeout=20, headers={"Icy-MetaData": "1"}) as r:
         metaint = int(r.headers.get("icy-metaint") or 0)
         if not metaint:
@@ -88,21 +88,20 @@ def fetch_icy(mount):
     if not m or " - " not in m.group(1):
         return []
     artist, title = m.group(1).split(" - ", 1)
-    # pas d'heure de début : on utilise un créneau de 10 min pour dédoublonner
-    return [{"artist": artist.strip(), "title": title.strip(), "start": f"icy-{int(time.time() // 600)}"}]
+    return [{"artist": artist.strip(), "title": title.strip()}]
 
 
-def get_tracks(mount):
+def get_tracks(station_id):
     try:
-        t = fetch_triton(mount)
+        t = fetch_nrj(station_id)
         if t:
-            return t, "triton"
+            return t, "api-nrj"
     except Exception as e:
-        log(f"[{mount}] Triton indisponible : {e}")
+        log(f"API NRJ indisponible : {e}")
     try:
-        return fetch_icy(mount), "icy"
+        return fetch_icy(), "icy"
     except Exception as e:
-        log(f"[{mount}] flux ICY indisponible : {e}")
+        log(f"flux ICY indisponible : {e}")
     return [], "aucune"
 
 
@@ -123,35 +122,41 @@ def load_state(path):
         with open(path) as f:
             return json.load(f)
     except (OSError, ValueError):
-        return {"seen": []}
+        return {"seen": {}}
 
 
 def save_state(path, state):
-    state["seen"] = state["seen"][-300:]
+    cutoff = time.time() - 24 * 3600
+    state["seen"] = {k: v for k, v in state.get("seen", {}).items() if v > cutoff}
     with open(path, "w") as f:
         json.dump(state, f, indent=1)
 
 
 def check_once(cfg, state):
+    now = time.time()
+    seen = state.setdefault("seen", {})
+    if not isinstance(seen, dict):
+        seen = state["seen"] = {}
+    tracks, source = get_tracks(cfg["station"])
+    if not tracks:
+        log("Aucun titre récupéré.")
+        return
+    log(f"({source}) en cours sur NRJ : {tracks[0]['artist']} - {tracks[0]['title']}")
     first_run = not state.get("initialized")
-    for mount in cfg["mounts"]:
-        tracks, source = get_tracks(mount)
-        if tracks:
-            log(f"[{mount}] ({source}) dernier titre : {tracks[0]['artist']} - {tracks[0]['title']}")
-        for t in reversed(tracks):  # du plus ancien au plus récent
-            hit = matches(t["artist"], cfg["artists"])
-            if not hit:
-                continue
-            key = f"{mount}|{norm(t['artist'])}|{norm(t['title'])}|{t['start']}"
-            if key in state["seen"]:
-                continue
-            state["seen"].append(key)
-            # Au tout premier lancement on ne renvoie pas l'historique, sauf le titre en cours.
-            if first_run and t is not tracks[0]:
-                continue
-            msg = f"🎵 Sur Énergie maintenant : {t['artist']} — {t['title']}"
-            log("ALERTE :", msg)
-            send_telegram(cfg["token"], cfg["chat_id"], msg)
+    # Titre en cours (+ le précédent si l'API le fournit, au cas où on l'aurait raté).
+    for i, t in enumerate(tracks[:2]):
+        if not matches(t["artist"], cfg["artists"]):
+            continue
+        key = f"{norm(t['artist'])}|{norm(t['title'])}"
+        if now - seen.get(key, 0) < REALERT_MINUTES * 60:
+            continue
+        seen[key] = now
+        if first_run and i > 0:
+            continue
+        label = "en direct sur NRJ" if i == 0 else "vient de passer sur NRJ"
+        msg = f"🎵 {t['artist']} — {t['title']}\n📻 {label} !"
+        log("ALERTE :", msg)
+        send_telegram(cfg["token"], cfg["chat_id"], msg)
     state["initialized"] = True
 
 
@@ -164,10 +169,10 @@ def main():
         "token": token,
         "chat_id": chat_id,
         "artists": [a.strip() for a in (os.environ.get("ARTISTS") or DEFAULT_ARTISTS).split(",") if a.strip()],
-        "mounts": [m.strip() for m in (os.environ.get("MOUNTS") or DEFAULT_MOUNTS).split(",") if m.strip()],
+        "station": (os.environ.get("NRJ_ID") or DEFAULT_NRJ_ID).strip(),
     }
     if "--test" in sys.argv:
-        send_telegram(token, chat_id, "✅ Bot Énergie connecté ! Surveillance : " + ", ".join(cfg["artists"]))
+        send_telegram(token, chat_id, "✅ Bot NRJ connecté ! Surveillance : " + ", ".join(cfg["artists"]))
         log("Message de test envoyé.")
         return
 

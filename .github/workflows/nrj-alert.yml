@@ -1,8 +1,8 @@
-name: Alerte Énergie
+name: Alerte NRJ
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # toutes les 5 min (GitHub peut retarder un peu)
+    - cron: "*/5 * * * *"   # relance toutes les 5 min ; chaque exécution vérifie NRJ chaque minute
   workflow_dispatch:
     inputs:
       test:
@@ -11,7 +11,7 @@ on:
         default: false
 
 concurrency:
-  group: energie-alert
+  group: nrj-alert
   cancel-in-progress: false
 
 jobs:
@@ -25,15 +25,16 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: state.json
-          key: energie-state-${{ github.run_id }}
-          restore-keys: energie-state-
+          key: nrj-state-${{ github.run_id }}
+          restore-keys: nrj-state-
 
-      - name: Vérifier Énergie
+      - name: Surveiller NRJ
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ARTISTS: ${{ vars.ARTISTS }}
-          MOUNTS: ${{ vars.MOUNTS }}
+          LOOP_MINUTES: "4"
+          POLL_SECONDS: "60"
         run: python bot.py ${{ inputs.test && '--test' || '' }}
 
       - name: Sauvegarder l'état
@@ -41,4 +42,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: state.json
-          key: energie-state-${{ github.run_id }}
+          key: nrj-state-${{ github.run_id }}
