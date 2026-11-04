@@ -9,6 +9,10 @@ on:
         description: "Envoyer un message de test sur Telegram"
         type: boolean
         default: false
+      diagnostic:
+        description: "Afficher les données brutes reçues de NRJ (dépannage)"
+        type: boolean
+        default: false
       artistes:
         description: "Artistes à surveiller pour cette exécution (vide = réglage habituel)"
         type: string
@@ -39,7 +43,7 @@ jobs:
           ARTISTS: ${{ inputs.artistes || vars.ARTISTS }}
           LOOP_MINUTES: "20"
           POLL_SECONDS: "60"
-        run: python bot.py ${{ inputs.test && '--test' || '' }}
+        run: python bot.py ${{ inputs.test && '--test' || '' }} ${{ inputs.diagnostic && '--debug' || '' }}
 
       - name: Sauvegarder l'état
         if: always()

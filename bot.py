@@ -56,6 +56,12 @@ def http_get(url, timeout=20, headers=None):
     return urllib.request.urlopen(req, timeout=timeout)
 
 
+def is_placeholder(artist, title):
+    """Entrées d'habillage antenne ('NRJ - NRJ en direct : Hit Music Only'), pas un vrai titre."""
+    a, t = norm(artist), norm(title)
+    return a in ("", "nrj") or "hit music only" in t or "en direct" in t
+
+
 # ---------- Source 1 : API NRJ ----------
 def fetch_nrj(station_id):
     tracks = []
@@ -67,7 +73,7 @@ def fetch_nrj(station_id):
             items = list(items.values())
         for it in items:
             artist, title = (it.get("art") or "").strip(), (it.get("tit") or "").strip()
-            if artist or title:
+            if (artist or title) and not is_placeholder(artist, title):
                 tracks.append({"artist": artist, "title": title})
         if tracks:
             break
@@ -88,7 +94,30 @@ def fetch_icy():
     if not m or " - " not in m.group(1):
         return []
     artist, title = m.group(1).split(" - ", 1)
+    if is_placeholder(artist, title):
+        return []
     return [{"artist": artist.strip(), "title": title.strip()}]
+
+
+def debug(station_id):
+    """Affiche les réponses brutes de chaque source, pour trouver où est le vrai titre."""
+    for act in ("get_cur", "get_plist"):
+        url = NRJ_API.format(act=act, id=station_id)
+        try:
+            with http_get(url) as r:
+                print(f"===== {url}\n{r.read()[:4000].decode('utf-8', 'replace')}\n", flush=True)
+        except Exception as e:
+            print(f"===== {url}\nERREUR {e}\n", flush=True)
+    url = os.environ.get("STREAM_URL") or DEFAULT_STREAM
+    try:
+        with http_get(url, timeout=20, headers={"Icy-MetaData": "1"}) as r:
+            print(f"===== {url} -> {r.geturl()}\n{dict(r.headers)}", flush=True)
+            metaint = int(r.headers.get("icy-metaint") or 0)
+            if metaint:
+                r.read(metaint)
+                print("ICY:", r.read(r.read(1)[0] * 16).decode("utf-8", "replace"), flush=True)
+    except Exception as e:
+        print(f"===== {url}\nERREUR {e}", flush=True)
 
 
 def get_tracks(station_id):
@@ -171,6 +200,9 @@ def main():
         "artists": [a.strip() for a in (os.environ.get("ARTISTS") or DEFAULT_ARTISTS).split(",") if a.strip()],
         "station": (os.environ.get("NRJ_ID") or DEFAULT_NRJ_ID).strip(),
     }
+    if "--debug" in sys.argv:
+        debug(cfg["station"])
+        return
     if "--test" in sys.argv:
         send_telegram(token, chat_id, "✅ Bot NRJ connecté ! Surveillance : " + ", ".join(cfg["artists"]))
         log("Message de test envoyé.")
