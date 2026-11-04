@@ -19,7 +19,7 @@ on:
         default: ""
 
 concurrency:
-  group: nrj-alert
+  group: nrj-alert-${{ inputs.diagnostic && 'diag' || 'surveillance' }}
   cancel-in-progress: false
 
 jobs:
