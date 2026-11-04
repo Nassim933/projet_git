@@ -1,0 +1,44 @@
+name: Alerte Énergie
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # toutes les 5 min (GitHub peut retarder un peu)
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Envoyer un message de test sur Telegram"
+        type: boolean
+        default: false
+
+concurrency:
+  group: energie-alert
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restaurer l'état (titres déjà signalés)
+        uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: energie-state-${{ github.run_id }}
+          restore-keys: energie-state-
+
+      - name: Vérifier Énergie
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ARTISTS: ${{ vars.ARTISTS }}
+          MOUNTS: ${{ vars.MOUNTS }}
+        run: python bot.py ${{ inputs.test && '--test' || '' }}
+
+      - name: Sauvegarder l'état
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state.json
+          key: energie-state-${{ github.run_id }}
