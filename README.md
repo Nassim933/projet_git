@@ -11,6 +11,9 @@ Exemple d'alerte :
 
 ## Comment ça marche
 - `bot.py` interroge l'API du lecteur web NRJ (`players.nrjaudio.fm`) **chaque minute** pour connaître le titre en cours.
+- Chaque exécution GitHub surveille pendant 55 min puis **se relance elle-même** → surveillance 24h/24.
+  (Le minuteur `cron` de GitHub n'est qu'un filet de sécurité : GitHub l'espace souvent à 1 lancement par heure ou moins.)
+- Pour **arrêter** le bot : Actions → Alerte NRJ → « ··· » → **Disable workflow**.
 - En secours, il lit le titre directement dans le flux audio NRJ (métadonnées ICY).
 - Accents, majuscules et « feat. » sont gérés (`ADÈLE`, `Karol G & Shakira`… sont détectés).
 - Un même titre n'est signalé qu'une fois par passage (mémoire dans le cache GitHub).
@@ -47,8 +50,8 @@ Pour vérifier qu'il lit bien NRJ : ouvre une exécution dans l'onglet **Actions
 - **Dépôt public** : minutes GitHub Actions illimitées → **gratuit**, surveillance quasi continue.
   (Le token reste caché dans les secrets, personne ne peut le voir.)
 - **Dépôt privé** : seulement 2 000 min/mois offertes, insuffisant pour une surveillance chaque minute.
-  Passe alors le cron à `*/30 * * * *` et `LOOP_MINUTES` à `1` dans `.github/workflows/nrj-alert.yml`
-  (moins réactif, certains passages peuvent être ratés).
+  Supprime alors l'étape « Relancer la surveillance » et mets `LOOP_MINUTES` à `1` dans
+  `.github/workflows/nrj-alert.yml` (beaucoup moins réactif, des passages seront ratés).
 
 ## Lancer en local
 ```bash

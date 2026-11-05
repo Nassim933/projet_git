@@ -2,7 +2,9 @@ name: Alerte NRJ
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # filet de sécurité : une exécution vérifie NRJ chaque minute pendant 20 min, la suivante attend dans la file
+    # Filet de sécurité seulement : GitHub espace beaucoup ces lancements (parfois 1 par heure ou moins).
+    # La surveillance continue vient de l'auto-relance en fin de job (voir dernière étape).
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       test:
@@ -22,10 +24,14 @@ concurrency:
   group: nrj-alert-${{ inputs.diagnostic && 'diag' || 'surveillance' }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  actions: write   # nécessaire pour que le job se relance lui-même
+
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
 
@@ -41,7 +47,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ARTISTS: ${{ inputs.artistes || vars.ARTISTS }}
-          LOOP_MINUTES: "20"
+          LOOP_MINUTES: "55"
           POLL_SECONDS: "60"
         run: python bot.py ${{ inputs.test && '--test' || '' }} ${{ inputs.diagnostic && '--debug' || '' }}
 
@@ -51,3 +57,9 @@ jobs:
         with:
           path: state.json
           key: nrj-state-${{ github.run_id }}
+
+      - name: Relancer la surveillance (boucle continue)
+        if: ${{ !cancelled() && !inputs.test && !inputs.diagnostic }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run nrj-alert.yml --repo "${{ github.repository }}" --ref "${{ github.ref_name }}"
