@@ -57,9 +57,9 @@ def http_get(url, timeout=20, headers=None):
 
 
 def is_placeholder(artist, title):
-    """Entrées d'habillage antenne ('NRJ - NRJ en direct : Hit Music Only'), pas un vrai titre."""
-    a, t = norm(artist), norm(title)
-    return a in ("", "nrj") or "hit music only" in t or "en direct" in t
+    """Habillage antenne ('Hit Music Only ! - NRJ', 'DE 6H A 10H - MANU SUR NRJ !'...), pas un vrai titre."""
+    text = f" {norm(artist)} {norm(title)} "
+    return not norm(artist) or " nrj " in text or "hit music only" in text
 
 
 # ---------- Source 1 : API NRJ ----------
